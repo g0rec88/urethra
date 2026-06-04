@@ -63,66 +63,86 @@ def wrap_text(text, font, max_width, draw):
 def draw_meme_text(draw, text, is_top, image_width, image_height):
     if text == "-":
         return
-
-    # 1. Початковий підбір розміру шрифту (базовий - 9% від ширини картинки)
     font_size = int(image_width * 0.09)
-    max_text_width = int(image_width * 0.9) # 5% відступи по боках
-    
-    # Завантажуємо шрифт impact.ttf з папки проєкту
+    max_text_width = int(image_width * 0.9)
     font_path = "impact.ttf"
     if not os.path.exists(font_path):
-        font_path = "LiberationSans-Bold.ttf" # Запасний, якщо забув залити
-        
+        font_path = "LiberationSans-Bold.ttf"
     try:
         font = ImageFont.truetype(font_path, font_size)
     except:
         font = ImageFont.load_default()
 
-    # 2. Динамічно зменшуємо шрифт, якщо текст гігантський, поки він не влізе хоча б у 3 рядки
-    lines = wrap_text(text, font, max_text_width, draw)
-    while len(lines) > 3 and font_size > 15:
+    # Розбиваємо текст на абзаци, які ввів користувач (через Shift+Enter / Enter)
+    paragraphs = text.split('\n')
+    all_lines = []
+    
+    # Для кожного абзацу робимо переноси слів
+    for para in paragraphs:
+        if para.strip():
+            para_lines = wrap_text(para, font, max_text_width, draw)
+            all_lines.append((para_lines, True)) # True означає кінець абзацу
+        else:
+            all_lines.append(([""], False))
+
+    # Динамічно зменшуємо шрифт, якщо тексту забагато
+    total_lines_count = sum(len(p[0]) for p in all_lines)
+    while total_lines_count > 4 and font_size > 15:
         font_size -= 4
         try:
             font = ImageFont.truetype(font_path, font_size)
         except:
             break
-        lines = wrap_text(text, font, max_text_width, draw)
+        all_lines = []
+        for para in paragraphs:
+            if para.strip():
+                all_lines.append((wrap_text(para, font, max_text_width, draw), True))
+            else:
+                all_lines.append(([""], False))
+        total_lines_count = sum(len(p[0]) for p in all_lines)
 
-    if not lines:
-        return
-
-    # Вираховуємо висоту одного рядка
     sample_bbox = draw.textbbox((0, 0), "AG", font=font)
     line_height = sample_bbox[3] - sample_bbox[1]
     
-    # 3. Вираховуємо стартову позицію Y (верх чи низ)
+    # Регулюємо відступи: між рядками 25% від висоти шрифту, між абзацами — 65%
+    line_spacing = int(line_height * 0.25)
+    paragraph_spacing = int(line_height * 0.65)
+    
+    # Рахуємо повну висоту всього тексту з урахуванням нових відступів
+    total_text_height = 0
+    for i, (lines, is_para_end) in enumerate(all_lines):
+        total_text_height += len(lines) * line_height + (len(lines) - 1) * line_spacing
+        if i < len(all_lines) - 1 and is_para_end:
+            total_text_height += paragraph_spacing
+
+    # Визначаємо стартову позицію Y
     if is_top:
         y_pos = int(image_height * 0.04)
     else:
-        # Для низу зміщуємо вгору на кількість рядків
-        total_height = len(lines) * (line_height + 5)
-        y_pos = int(image_height * 0.93) - total_height
+        y_pos = int(image_height * 0.94) - total_text_height
 
-    # 4. Малюємо кожен рядок з акуратною обводкою
-    # Товщина контуру тепер залежить від розміру шрифту (робимо тоншим)
-    outline_thickness = max(1, int(font_size * 0.05)) 
+    outline_thickness = max(1, int(font_size * 0.05))
 
-    for line in lines:
-        bbox = draw.textbbox((0, 0), line, font=font)
-        line_width = bbox[2] - bbox[0]
-        x_pos = (image_width - line_width) / 2
-        
-        # Малюємо оптимізовану обводку
-        for adj_x in range(-outline_thickness, outline_thickness + 1):
-            for adj_y in range(-outline_thickness, outline_thickness + 1):
-                # Пропускаємо кути для м'якшого скруглення контуру
-                if abs(adj_x) == outline_thickness and abs(adj_y) == outline_thickness:
-                    continue
-                draw.text((x_pos + adj_x, y_pos + adj_y), line, font=font, fill="black")
-                
-        # Основний текст
-        draw.text((x_pos, y_pos), line, font=font, fill="white")
-        y_pos += line_height + 5 # Крок на наступний рядок
+    # Малюємо текст
+    for lines, is_para_end in all_lines:
+        for i, line in enumerate(lines):
+            if not line:
+                continue
+            bbox = draw.textbbox((0, 0), line, font=font)
+            line_width = bbox[2] - bbox[0]
+            x_pos = (image_width - line_width) / 2
+            
+            for adj_x in range(-outline_thickness, outline_thickness + 1):
+                for adj_y in range(-outline_thickness, outline_thickness + 1):
+                    if abs(adj_x) == outline_thickness and abs(adj_y) == outline_thickness:
+                        continue
+                    draw.text((x_pos + adj_x, y_pos + adj_y), line, font=font, fill="black")
+            
+            draw.text((x_pos, y_pos), line, font=font, fill="white")
+            y_pos += line_height + line_spacing
+            
+        if is_para_end:
+            y_pos += paragraph_spacing - line_spacing
 
 @dp.message(MemeStates.waiting_for_bottom_text)
 async def process_bottom_text(message: Message, state: FSMContext):
