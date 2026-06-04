@@ -16,7 +16,7 @@ class MemeStates(StatesGroup):
     waiting_for_top_text = State()
     waiting_for_bottom_text = State()
 
-@dp.message(Command("start", "impacct"))
+@dp.message(Command("impact"))
 async def start_cmd(message: Message, state: FSMContext):
     await message.answer("Скиньте кошерное изображение")
     await state.set_state(MemeStates.waiting_for_photo)
