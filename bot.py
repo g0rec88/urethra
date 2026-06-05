@@ -150,7 +150,7 @@ async def process_bottom_text(message: Message, state: FSMContext):
     bottom_text = message.text.upper()
     top_text = user_data['top_text']
     
-    await message.answer("Обробляю шрифт та переноси... Зачекай секунду.")
+    await message.answer("Лее брат падажжи секунд.")
     
     file = await bot.get_file(user_data['photo_id'])
     file_bytes = await bot.download_file(file.file_path)
