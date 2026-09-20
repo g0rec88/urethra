@@ -1,11 +1,13 @@
 import os
 import asyncio
+from io import BytesIO
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, BufferedInputFile
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from PIL import Image, ImageDraw, ImageFont
+from aiohttp import web  # Додано імпорт aiohttp
 
 TOKEN = os.getenv("BOT_TOKEN")
 bot = Bot(token=TOKEN)
@@ -15,6 +17,27 @@ class MemeStates(StatesGroup):
     waiting_for_photo = State()
     waiting_for_top_text = State()
     waiting_for_bottom_text = State()
+
+# --- Вебсервер для Render / UptimeRobot ---
+async def handle_ping(request):
+    """Обробник HTTP-запитів для перевірки статусу (health check)"""
+    return web.Response(text="Bot is running!", status=200)
+
+async def start_web_server():
+    """Запуск легкого HTTP сервера"""
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    app.router.add_get("/health", handle_ping)
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    # Render передає номер порту через змінну середовища PORT
+    port = int(os.getenv("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"Web server started on port {port}")
+# ------------------------------------------
 
 @dp.message(Command("impact"))
 async def start_cmd(message: Message, state: FSMContext):
@@ -35,7 +58,6 @@ async def process_top_text(message: Message, state: FSMContext):
     await state.set_state(MemeStates.waiting_for_bottom_text)
 
 def wrap_text(text, font, max_width, draw):
-    """Розбиває текст на кілька рядків, якщо він надто довгий"""
     if text == "-":
         return []
     
@@ -73,19 +95,16 @@ def draw_meme_text(draw, text, is_top, image_width, image_height):
     except:
         font = ImageFont.load_default()
 
-    # Розбиваємо текст на абзаци, які ввів користувач (через Shift+Enter / Enter)
     paragraphs = text.split('\n')
     all_lines = []
     
-    # Для кожного абзацу робимо переноси слів
     for para in paragraphs:
         if para.strip():
             para_lines = wrap_text(para, font, max_text_width, draw)
-            all_lines.append((para_lines, True)) # True означає кінець абзацу
+            all_lines.append((para_lines, True))
         else:
             all_lines.append(([""], False))
 
-    # Динамічно зменшуємо шрифт, якщо тексту забагато
     total_lines_count = sum(len(p[0]) for p in all_lines)
     while total_lines_count > 4 and font_size > 15:
         font_size -= 4
@@ -104,18 +123,15 @@ def draw_meme_text(draw, text, is_top, image_width, image_height):
     sample_bbox = draw.textbbox((0, 0), "AG", font=font)
     line_height = sample_bbox[3] - sample_bbox[1]
     
-    # Регулюємо відступи: між рядками 25% від висоти шрифту, між абзацами — 65%
     line_spacing = int(line_height * 0.25)
     paragraph_spacing = int(line_height * 0.65)
     
-    # Рахуємо повну висоту всього тексту з урахуванням нових відступів
     total_text_height = 0
     for i, (lines, is_para_end) in enumerate(all_lines):
         total_text_height += len(lines) * line_height + (len(lines) - 1) * line_spacing
         if i < len(all_lines) - 1 and is_para_end:
             total_text_height += paragraph_spacing
 
-    # Визначаємо стартову позицію Y
     if is_top:
         y_pos = int(image_height * 0.04)
     else:
@@ -123,7 +139,6 @@ def draw_meme_text(draw, text, is_top, image_width, image_height):
 
     outline_thickness = max(1, int(font_size * 0.05))
 
-    # Малюємо текст
     for lines, is_para_end in all_lines:
         for i, line in enumerate(lines):
             if not line:
@@ -160,12 +175,9 @@ async def process_bottom_text(message: Message, state: FSMContext):
         width, height = img.size
         draw = ImageDraw.Draw(img)
         
-        # Малюємо верхній текст
         draw_meme_text(draw, top_text, True, width, height)
-        # Малюємо нижній текст
         draw_meme_text(draw, bottom_text, False, width, height)
         
-        from io import BytesIO
         output_buffer = BytesIO()
         img.save(output_buffer, format="JPEG", quality=95)
         output_buffer.seek(0)
@@ -175,6 +187,10 @@ async def process_bottom_text(message: Message, state: FSMContext):
     await state.clear()
 
 async def main():
+    # 1. Запускаємо вебсервер для очікування запитів від пінгатора
+    await start_web_server()
+    
+    # 2. Запускаємо Long Polling бота
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
