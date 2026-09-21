@@ -1,4 +1,5 @@
 import os
+import re
 import random
 import asyncio
 from io import BytesIO
@@ -25,123 +26,80 @@ class TextProcessingStates(StatesGroup):
     waiting_for_niche = State()
 
 
-# --- ТАБЛИЦІ ЗАМІН ДЛЯ ТЕКСТУ ---
+# --- ТАБЛИЦІ ЗАМІН ТА ЛОГІКА ТЕКСТУ ---
 
-# Повна 1337-таблиця для /leetshi
-# Єдиний словник 1337-замін (все в нижньому регістрі)
+# 1. Словник для /leetshi та Leet-стилю
 LEET_MAP = {
-    'а': '4',
-    'б': '6',
-    'в': 'B',
-    'г': 'r',
-    'д': 'D',
-    'е': '3',
-    'є': '3',
-    'ё': '3',
-    'ж': '>|<',
-    'з': '3',
-    'и': 'U',
-    'і': 'I',
-    'ї': 'Yi',
-    'й': 'Y',
-    'к': 'K',
-    'л': 'Jl',
-    'м': 'M',
-    'н': 'H',
-    'о': '0',
-    'п': 'n',
-    'р': 'P',
-    'с': 'C',
-    'т': 'T',
-    'у': 'Y',
-    'ф': 'F',
-    'х': 'X',
-    'ц': 'C',
-    'ч': '4',
-    'ш': 'W',
-    'щ': 'W',
-    'ъ': "'",
-    'ы': 'bl',
-    'ь': 'b',
-    'э': '3',
-    'ю': '10',
-    'я': 'R'
+    'а': '4', 'б': '6', 'в': 'B', 'г': 'r', 'д': 'D', 'е': '3', 'є': '3', 'ё': '3',
+    'ж': '>|<', 'з': '3', 'и': 'U', 'і': 'I', 'ї': 'Yi', 'й': 'Y', 'к': 'K',
+    'л': 'Jl', 'м': 'M', 'н': 'H', 'о': '0', 'п': 'n', 'р': 'P', 'с': 'C',
+    'т': 'T', 'у': 'Y', 'ф': 'F', 'х': 'X', 'ц': 'C', 'ч': '4', 'ш': 'W',
+    'щ': 'W', 'ъ': "'", 'ы': 'bl', 'ь': 'b', 'э': '3', 'ю': '10', 'я': 'R'
 }
 
+# 2. Словник для англійських/трансліт аналогів у "нішовому" стилі
+TRANSLIT_MAP = {
+    'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'є': 'ye',
+    'ж': 'zh', 'з': 'z', 'и': 'y', 'і': 'i', 'ї': 'yi', 'й': 'y', 'к': 'k',
+    'л': 'l', 'м': 'm', 'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 'c',
+    'т': 't', 'у': 'u', 'ф': 'f', 'х': 'h', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh',
+    'щ': 'sch', 'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya'
+}
+
+
 def convert_to_leet(text: str) -> str:
-    """Заміняє всі літери на 1337-аналоги, ігноруючи регістр вхідного тексту."""
+    """Повний 1337-переклад без урахування регістру."""
     return ''.join(LEET_MAP.get(char.lower(), char) for char in text)
-
-# Варіанти аналогів (трансліт + leet) для /nichetxt
-NICHE_ANALOGS = {
-    'а': ['a'], 'А': ['A'],
-    'б': ['6', 'b'], 'Б': ['6', 'B'],
-    'в': ['b', 'v', 'w', 'B'], 'В': ['B', 'V', 'W'],
-    'г': ['r', 'g'], 'Г': ['G', 'R'],
-    'д': ['d', 'g'], 'Д': ['D'],
-    'е': ['e', '3'], 'Е': ['E', '3'],
-    'є': ['e', 'ye'], 'Є': ['E', 'Ye'],
-    'ж': ['zh', '>|<'], 'Ж': ['Zh', '>|<'],
-    'з': ['z', '3'], 'З': ['Z', '3'],
-    'и': ['u', 'i'], 'И': ['U', 'I'],
-    'і': ['i'], 'І': ['I'],
-    'ї': ['yi', 'i'], 'Ї': ['Yi', 'I'],
-    'й': ['y'], 'Й': ['Y'],
-    'к': ['k'], 'К': ['K'],
-    'л': ['l', 'jl'], 'Л': ['L', 'Jl'],
-    'м': ['m'], 'М': ['M'],
-    'н': ['h', 'n'], 'Н': ['H', 'N'],
-    'о': ['0', 'o'], 'О': ['0', 'O'],
-    'п': ['n', 'p'], 'П': ['P', 'N'],
-    'р': ['p', 'r'], 'Р': ['P', 'R'],
-    'с': ['c', 's'], 'С': ['C', 'S'],
-    'т': ['t'], 'Т': ['T'],
-    'у': ['y', 'u'], 'У': ['Y', 'U'],
-    'ф': ['f'], 'Ф': ['F'],
-    'х': ['x', 'h'], 'Х': ['X', 'H'],
-    'ц': ['c', 'ts'], 'Ц': ['C', 'Ts'],
-    'ч': ['4', 'ch'], 'Ч': ['4', 'Ch'],
-    'ш': ['w', 'sh'], 'Ш': ['W', 'Sh'],
-    'щ': ['w', 'sch'], 'Щ': ['W', 'Sch'],
-    'ы': ['bl', 'y'], 'Ы': ['Bl', 'Y'],
-    'ь': ['b', ''], 'Ь': ['B'],
-    'э': ['e'], 'Э': ['E'],
-    'ю': ['10', 'yu'], 'Ю': ['10', 'Yu'],
-    'я': ['r', 'ya'], 'Я': ['R', 'Ya']
-}
-
-
-def convert_to_leet(text: str) -> str:
-    """Заміняє всі відомі літери на їхні 1337-аналоги."""
-    return ''.join(LEET_MAP.get(char, char) for char in text)
 
 
 def convert_to_niche(text: str) -> str:
-    """Генерує 'нішовий' текст за вашими правилами."""
-    replace_ratio = random.uniform(0.3, 0.7)  # від 30% до 70% літер
-    space_delete_ratio = random.uniform(0.05, 0.10)  # від 5% до 10% пробілів
-
+    """Читабельний нішовий стиль з міксом leet/англ по словах, помірною заміною та випадковим CAPS."""
+    tokens = re.split(r'(\s+|[.,!?]+)', text)
     result = []
-    for char in text:
-        # Випадкове видалення пробілів
-        if char == ' ':
-            if random.random() < space_delete_ratio:
+
+    for token in tokens:
+        if not token:
+            continue
+
+        # Обробка пробілів (~7% шанс видалення)
+        if re.match(r'^\s+$', token):
+            if random.random() < 0.07:
                 continue
-            result.append(' ')
+            result.append(token)
             continue
 
-        # Випадкове дублювання розділових знаків (коми та крапки)
-        if char in [',', '.']:
-            result.append(char)
-            if random.random() < 0.3:  # 30% шанс здублювати
-                result.append(char * random.randint(1, 2))
+        # Обробка пунктуації (~20% шанс дублювання розділових знаків)
+        if re.match(r'^[.,!?]+$', token):
+            if random.random() < 0.20:
+                token = token * random.randint(2, 3)
+            result.append(token)
             continue
 
-        # Випадкова заміна літер на англ/трансліт/leet
-        if char in NICHE_ANALOGS and random.random() < replace_ratio:
-            result.append(random.choice(NICHE_ANALOGS[char]))
-        else:
-            result.append(char)
+        word = token
+
+        # ~15% шанс перевести окреме слово у CAPS
+        is_caps = random.random() < 0.15
+        if is_caps:
+            word = word.upper()
+
+        # Для конкретного слова вибираємо єдиний стиль (Leet або Translit)
+        use_leet = random.choice([True, False])
+        current_map = LEET_MAP if use_leet else TRANSLIT_MAP
+
+        new_word = []
+        for char in word:
+            char_lower = char.lower()
+            
+            # Заміняємо ~35% літер у слові для збереження читабельності
+            if char_lower in current_map and random.random() < 0.35:
+                replacement = current_map[char_lower]
+                if is_caps and len(replacement) == 1:
+                    replacement = replacement.upper()
+                new_word.append(replacement)
+            else:
+                new_word.append(char)
+
+        result.append(''.join(new_word))
 
     return ''.join(result)
 
