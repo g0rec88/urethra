@@ -26,23 +26,52 @@ class Cs16States(StatesGroup):
 def apply_cs_overlay(background_img: Image.Image) -> Image.Image:
     bg_width, bg_height = background_img.size
     
-    # Шлях до твоїх рук із CS 1.6 (PNG із прозорим фоном)
     arms_path = "cs_arms.png"
     
-    # Якщо файлу немає, створюємо простий плейсхолдер, щоб бот не падав
+    # Якщо картинки немає, створюємо заглушку
     if not os.path.exists(arms_path):
-        img_placeholder = Image.new("RGBA", (bg_width, int(bg_height * 0.5)), (0, 0, 0, 0))
-        d = ImageDraw.Draw(img_placeholder)
-        d.rectangle([bg_width // 3, bg_height // 4, bg_width * 2 // 3, bg_height * 0.4], fill=(50, 80, 50, 200))
+        img_placeholder = Image.new("RGBA", (bg_width, int(bg_height * 0.4)), (0, 0, 0, 0))
         arms_img = img_placeholder
     else:
         arms_img = Image.open(arms_path).convert("RGBA")
     
-    # Масштабуємо руки під розмір завантаженого користувачем фото
+    # Масштабуємо руки під розмір фото ( робимо їх трохи компактнішими, ширина ~85% від ширини кадру)
+    target_arms_width = int(bg_width * 0.95)
     arms_aspect = arms_img.width / arms_img.height
-    new_arms_width = bg_width
-    new_arms_height = int(new_arms_width / arms_aspect)
-    arms_img = arms_img.resize((new_arms_width, new_arms_height), Image.Resampling.LANCZOS)
+    target_arms_height = int(target_arms_width / arms_aspect)
+    
+    arms_img = arms_img.resize((target_arms_width, target_arms_height), Image.Resampling.LANCZOS)
+    
+    # --- АДАПТАЦІЯ ПІД ОСВІТЛЕННЯ ФОНУ ---
+    grayscale_bg = background_img.convert("L")
+    stat = ImageStat.Stat(grayscale_bg)
+    avg_brightness = stat.mean[0]
+    
+    # Коригуємо яскравість рук під загальне світло фото
+    enhancer_bright = ImageEnhance.Brightness(arms_img)
+    brightness_factor = max(0.5, min(1.3, avg_brightness / 120.0))
+    arms_img = enhancer_bright.enhance(brightness_factor)
+    
+    # Додаємо легкий контраст, щоб руки виглядали об'ємніше на фоні
+    enhancer_contrast = ImageEnhance.Contrast(arms_img)
+    arms_img = enhancer_contrast.enhance(1.1)
+    
+    # Вираховуємо позицію для ідеального притискання до низу кадру
+    # Зміщуємо трохи вліво/вправо, щоб руки симетрично обрамляли низ
+    paste_x = (bg_width - target_arms_width) // 2
+    paste_y = bg_height - target_arms_height + int(bg_height * 0.03) # трохи впиваємо в нижню рамку
+    
+    # Накладаємо з урахуванням альфа-каналу (прозорості)
+    base_rgba = background_img.convert("RGBA")
+    
+    # Створюємо прозорий шар під розмір фону, щоб оверлей ліг ідеально
+    overlay = Image.new("RGBA", (bg_width, bg_height), (0, 0, 0, 0))
+    overlay.paste(arms_img, (paste_x, paste_y), arms_img)
+    
+    # Зливаємо фон і руки
+    final_img = Image.alpha_composite(base_rgba, overlay)
+    
+    return final_img.convert("RGB")
     
     # --- АДАПТАЦІЯ ПІД ОСВІТЛЕННЯ ФОНУ ---
     # Вираховуємо середню яскравість фонового зображення
@@ -75,14 +104,14 @@ def apply_cs_overlay(background_img: Image.Image) -> Image.Image:
 
 # --- ОБРОБНИКИ КОМАНДИ /cs16 ---
 
-@dp.message(Command("cs16"))
+@dp.message(Command("cs16knife"))
 async def cs16_cmd(message: Message, state: FSMContext):
-    await message.answer("🎮 Закинь скріншот або фото, щоб вдягнути тактичні рукавички та взяти ган з CS 1.6!")
+    await message.answer("Скиньте кошерное изображение")
     await state.set_state(Cs16States.waiting_for_photo)
 
 @dp.message(Cs16States.waiting_for_photo, F.photo)
 async def process_cs16_photo(message: Message, state: FSMContext):
-    await message.answer("⏳ Рендеримо лобі CS 1.6, підганяємо під освітлення...")
+    await message.answer("Возвращяем в 2005 год")
     
     photo = message.photo[-1]
     file = await bot.get_file(photo.file_id)
@@ -100,7 +129,7 @@ async def process_cs16_photo(message: Message, state: FSMContext):
         output_buffer.seek(0)
         
     input_file = BufferedInputFile(output_buffer.getvalue(), filename="cs16_view.jpg")
-    await message.answer_photo(photo=input_file, caption="Terrorists Win. 🏆")
+    await message.answer_photo(photo=input_file, caption="В гостях хорошо а дома Сounter-Strike")
     await state.clear()
 
 class MemeStates(StatesGroup):
