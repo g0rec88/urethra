@@ -10,12 +10,99 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from PIL import Image, ImageDraw, ImageFont
 from aiohttp import web
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageStat
 
 TOKEN = os.getenv("BOT_TOKEN")
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 # --- СТАНИ FSM ---
+# --- ДОДАЙ ЦЕЙ СТАН ДО ІНШИХ СТАНІВ FSM ---
+class Cs16States(StatesGroup):
+    waiting_for_photo = State()
+
+
+# --- ДОДАЙ ЦЮ ФУНКЦІЮ ОБРОБКИ ОСВІТЛЕННЯ ТА НАКЛАДАННЯ ---
+def apply_cs_overlay(background_img: Image.Image) -> Image.Image:
+    bg_width, bg_height = background_img.size
+    
+    # Шлях до твоїх рук із CS 1.6 (PNG із прозорим фоном)
+    arms_path = "cs_arms.png"
+    
+    # Якщо файлу немає, створюємо простий плейсхолдер, щоб бот не падав
+    if not os.path.exists(arms_path):
+        img_placeholder = Image.new("RGBA", (bg_width, int(bg_height * 0.5)), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img_placeholder)
+        d.rectangle([bg_width // 3, bg_height // 4, bg_width * 2 // 3, bg_height * 0.4], fill=(50, 80, 50, 200))
+        arms_img = img_placeholder
+    else:
+        arms_img = Image.open(arms_path).convert("RGBA")
+    
+    # Масштабуємо руки під розмір завантаженого користувачем фото
+    arms_aspect = arms_img.width / arms_img.height
+    new_arms_width = bg_width
+    new_arms_height = int(new_arms_width / arms_aspect)
+    arms_img = arms_img.resize((new_arms_width, new_arms_height), Image.Resampling.LANCZOS)
+    
+    # --- АДАПТАЦІЯ ПІД ОСВІТЛЕННЯ ФОНУ ---
+    # Вираховуємо середню яскравість фонового зображення
+    grayscale_bg = background_img.convert("L")
+    stat = ImageStat.Stat(grayscale_bg)
+    avg_brightness = stat.mean[0] # значення від 0 (темно) до 255 (сліпо світло)
+    
+    # Якщо фон занадто темний (нічна карта типу de_inferno вночі), затемнюємо руки
+    # Якщо світлий (de_dust2 на сонці), робимо руки яскравішими й контрастнішими
+    enhancer_bright = ImageEnhance.Brightness(arms_img)
+    # Коефіцієнт корекції яскравості відносно середнього значення (база ~128)
+    brightness_factor = max(0.4, min(1.5, avg_brightness / 128.0))
+    arms_img = enhancer_bright.enhance(brightness_factor)
+    
+    # Додаємо легкий відтінок (Color grading), щоб руки зливалися з атмосферою кадру
+    # Створюємо колірний оверлей на основі домінуючого кольору фону
+    bg_thumb = background_img.resize((50, 50))
+    dominant_color = bg_thumb.getpixel((25, 25)) # беремо приблизний колір середовища
+    
+    # Накладаємо руки унизу кадру (знизу по центру)
+    paste_x = 0
+    paste_y = bg_height - new_arms_height
+    
+    # Конвертуємо фон у RGBA для коректного накладання PNG з прозорістю
+    base_rgba = background_img.convert("RGBA")
+    base_rgba.paste(arms_img, (paste_x, paste_y), arms_img)
+    
+    return base_rgba.convert("RGB")
+
+
+# --- ОБРОБНИКИ КОМАНДИ /cs16 ---
+
+@dp.message(Command("cs16"))
+async def cs16_cmd(message: Message, state: FSMContext):
+    await message.answer("🎮 Закинь скріншот або фото, щоб вдягнути тактичні рукавички та взяти ган з CS 1.6!")
+    await state.set_state(Cs16States.waiting_for_photo)
+
+@dp.message(Cs16States.waiting_for_photo, F.photo)
+async def process_cs16_photo(message: Message, state: FSMContext):
+    await message.answer("⏳ Рендеримо лобі CS 1.6, підганяємо під освітлення...")
+    
+    photo = message.photo[-1]
+    file = await bot.get_file(photo.file_id)
+    file_bytes = await bot.download_file(file.file_path)
+    
+    # Обробка зображення в пам'яті
+    with Image.open(file_bytes) as img:
+        img = img.convert("RGB")
+        
+        # Викликаємо функцію накладання з адаптацією освітлення
+        result_img = apply_cs_overlay(img)
+        
+        output_buffer = BytesIO()
+        result_img.save(output_buffer, format="JPEG", quality=95)
+        output_buffer.seek(0)
+        
+    input_file = BufferedInputFile(output_buffer.getvalue(), filename="cs16_view.jpg")
+    await message.answer_photo(photo=input_file, caption="Terrorists Win. 🏆")
+    await state.clear()
+
 class MemeStates(StatesGroup):
     waiting_for_photo = State()
     waiting_for_top_text = State()
