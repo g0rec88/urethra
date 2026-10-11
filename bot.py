@@ -28,18 +28,31 @@ def apply_cs_overlay(background_img: Image.Image) -> Image.Image:
     
     arms_path = "cs_arms.png"
     
-    # Якщо картинки немає, створюємо заглушку
     if not os.path.exists(arms_path):
-        img_placeholder = Image.new("RGBA", (bg_width, int(bg_height * 0.4)), (0, 0, 0, 0))
-        arms_img = img_placeholder
+        # Заглушка, якщо файлу немає
+        arms_img = Image.new("RGBA", (bg_width, int(bg_height * 0.3)), (0, 0, 0, 0))
     else:
         arms_img = Image.open(arms_path).convert("RGBA")
+        
+        # МАГІЯ: автоматично знаходимо і вирізаємо тільки реальні руки/ніж (без прозорих відступів)
+        bbox = arms_img.getbbox()
+        if bbox:
+            arms_img = arms_img.crop(bbox)
     
-    # Масштабуємо руки під розмір фото ( робимо їх трохи компактнішими, ширина ~85% від ширини кадру)
-    target_arms_width = int(bg_width * 0.95)
+    # Визначаємо, чи фото вертикальне (портрет) чи горизонтальне (ландшафт)
+    is_portrait = bg_height > bg_width
+    
+    if is_portrait:
+        # Для вертикальних фото (як твої скріншоти з ямою) робимо руки ширшими відносно кадру
+        target_arms_width = int(bg_width * 1.1)
+    else:
+        # Для горизонтальних фото
+        target_arms_width = int(bg_width * 0.85)
+        
     arms_aspect = arms_img.width / arms_img.height
     target_arms_height = int(target_arms_width / arms_aspect)
     
+    # Масштабуємо руки під розраховані розміри
     arms_img = arms_img.resize((target_arms_width, target_arms_height), Image.Resampling.LANCZOS)
     
     # --- АДАПТАЦІЯ ПІД ОСВІТЛЕННЯ ФОНУ ---
@@ -47,28 +60,22 @@ def apply_cs_overlay(background_img: Image.Image) -> Image.Image:
     stat = ImageStat.Stat(grayscale_bg)
     avg_brightness = stat.mean[0]
     
-    # Коригуємо яскравість рук під загальне світло фото
     enhancer_bright = ImageEnhance.Brightness(arms_img)
     brightness_factor = max(0.5, min(1.3, avg_brightness / 120.0))
     arms_img = enhancer_bright.enhance(brightness_factor)
     
-    # Додаємо легкий контраст, щоб руки виглядали об'ємніше на фоні
     enhancer_contrast = ImageEnhance.Contrast(arms_img)
     arms_img = enhancer_contrast.enhance(1.1)
     
-    # Вираховуємо позицію для ідеального притискання до низу кадру
-    # Зміщуємо трохи вліво/вправо, щоб руки симетрично обрамляли низ
+    # Центруємо по горизонталі та притискаємо до нижнього краю екрана
     paste_x = (bg_width - target_arms_width) // 2
-    paste_y = bg_height - target_arms_height + int(bg_height * 0.03) # трохи впиваємо в нижню рамку
+    paste_y = bg_height - target_arms_height + int(target_arms_height * 0.08) # легкий заступ за нижню рамку
     
-    # Накладаємо з урахуванням альфа-каналу (прозорості)
+    # Накладаємо з урахуванням прозорості
     base_rgba = background_img.convert("RGBA")
-    
-    # Створюємо прозорий шар під розмір фону, щоб оверлей ліг ідеально
     overlay = Image.new("RGBA", (bg_width, bg_height), (0, 0, 0, 0))
     overlay.paste(arms_img, (paste_x, paste_y), arms_img)
     
-    # Зливаємо фон і руки
     final_img = Image.alpha_composite(base_rgba, overlay)
     
     return final_img.convert("RGB")
